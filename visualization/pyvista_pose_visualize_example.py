@@ -8,6 +8,7 @@ sys.path.insert(0,str(Path('./source').resolve()))
 import time
 
 import mrob
+import imageio
 
 def stop_animation():
     global running
@@ -19,9 +20,10 @@ def continue_animation():
 
 
 if __name__ == "__main__":
-    file_path = "poses/poses_circle2.txt"
+    file_path = "visualization/poses/poses_circle2.txt"
 
     data = np.genfromtxt(file_path)
+    
 
     traj = data[:, 1:4]  # smartphone trajectory
     quat = data[:, 4:]  # smartphone attitude
@@ -50,6 +52,7 @@ if __name__ == "__main__":
 
     running = True
     current_frame = 0  # Start from the first frame
+    frames = [] 
 
     while current_frame < len(data) - 1:    
         p.update()
@@ -69,4 +72,12 @@ if __name__ == "__main__":
         oY.user_matrix = pose
         oZ.user_matrix = pose  
         
+        screenshot = p.screenshot()  # Capture the current frame as an image
+        frames.append(screenshot)
+        
         current_frame += 1
+        
+    gif_filename = "animation.gif"
+    with imageio.get_writer(gif_filename, mode='I', duration=0.05) as writer:
+        for frame in frames:
+            writer.append_data(frame)

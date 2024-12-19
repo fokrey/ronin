@@ -8,7 +8,7 @@ import json
 
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from tensorboardX import SummaryWriter
+#from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from data_glob_speed import *

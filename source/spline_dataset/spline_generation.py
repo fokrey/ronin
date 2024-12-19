@@ -59,7 +59,7 @@ def on_move(event):
 def on_close(event):
     global spline_points
 
-    np.savetxt("./theseus_tests/theseus_tum_vi/spline_points.txt", spline_points)
+    np.savetxt("source/spline_dataset/spline_points.txt", spline_points)
 
 def on_click(event):
     if event.button is MouseButton.LEFT:
