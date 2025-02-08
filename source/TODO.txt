@@ -1,0 +1,12 @@
+rotate predicted velocity to local frame in odo 
+visualize odometry pred/GT odometry 
+initialize nodes with predicted odometry
+visualize delta_x 
+Add small perturbation to gt_poses when adding nodes to the graph 
+Plot chi2 and mse on the same plot
+More epochs
+print_2d_graph several intermediate graph states  
+scheduler
+
+
+Linear graph 

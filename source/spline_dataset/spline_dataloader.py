@@ -29,6 +29,39 @@ def get_gt_se3_Poses(poses):
 
     return result
 
+
+def convert_to_se3(gt_poses):
+    """
+    Convert gt_poses (N x 4) to SE(3) (N x 4 x 4).
+    
+    Args:
+        gt_poses: ndarray of shape (N, 4), each row [x, y, cos(theta), sin(theta)].
+        
+    Returns:
+        se3_matrices: ndarray of shape (N, 4, 4), SE(3) transformation matrices.
+    """
+    num_poses = gt_poses.shape[0]
+    se3_matrices = np.zeros((num_poses, 4, 4))
+
+    for i, pose in enumerate(gt_poses):
+        x, y, cos_theta, sin_theta = pose
+        theta = np.arctan2(sin_theta, cos_theta)
+
+        R = np.array([
+            [np.cos(theta), -np.sin(theta), 0],
+            [np.sin(theta),  np.cos(theta), 0],
+            [0,              0,             1]
+        ])
+
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = [x, y, 0]
+
+        se3_matrices[i] = T
+
+    return se3_matrices
+
+
 def get_gt_se3vel_Poses(poses, velocities):
     result = [None]*len(poses)
     angles = np.zeros((len(poses),3))
@@ -83,6 +116,14 @@ class Spline_2D_Dataset():
             self.gt_traj[b] = spline_points
 
             acc, gyro, tau, n, velocity, time = generate_imu_data(spline_points)
+            number_elements_to_cut = 450
+            self.gt_traj[b] = self.gt_traj[b][number_elements_to_cut:-number_elements_to_cut]
+            acc = acc[number_elements_to_cut:-number_elements_to_cut]
+            gyro = gyro[number_elements_to_cut:-number_elements_to_cut]
+            tau = tau[number_elements_to_cut:-number_elements_to_cut]
+            velocity = velocity[number_elements_to_cut:-number_elements_to_cut]
+            time = time[number_elements_to_cut:-number_elements_to_cut]
+            #TODO cut begining and end of splines
             # TODO inject noise:
             # -additive
             # -multiplicative
@@ -119,37 +160,36 @@ class Spline_2D_Dataset():
 
                 self.gt_odometry[b].append(tmp)
 
-            self.gt_poses[b] = np.concatenate((self.gt_traj[b][:-1], tau),axis=1)[::window]
+            self.gt_poses[b] = np.concatenate((self.gt_traj[b][:tau.shape[0]], tau), axis=1)[::window]
             self.gt_velocity[b] = velocity[::window]
             self.time[b] = time[::window]
 
         self.X = np.array(self.slices)
-        self.y = np.array(self.gt_odometry)
-        self.gt_traj = np.array(self.gt_traj)
+        self.odo = np.array(self.gt_odometry)
+        #self.gt_traj = np.array(self.gt_traj)
         self.gt_poses = np.array(self.gt_poses)
         self.gt_velocity = np.array(self.gt_velocity)
-        self.gt_velocity.reshape(-1, 2).shape
         self.time = np.array(self.time)
         
         self.adjust_shape()
         
-        self.X = self.X.reshape(-1, self.X.shape[2], self.X.shape[3])
-        self.gt_velocity = self.gt_velocity.reshape(-1, self.gt_velocity.shape[-1])
-        
-    def normalize(self):
-        imu_data = np.concatenate(self.X, axis=0)
-        self.imu_mean = imu_data.mean(axis=(0, 1))
-        self.imu_std = imu_data.std(axis=(0, 1))
-        for i in range(len(self.X)):
-            self.x[i] = (self.X[i] - self.imu_mean) / self.imu_std
+        self.gt_poses_se3 = convert_to_se3(self.gt_poses)
             
     def adjust_shape(self):
         min_length = min(self.X.shape[1], self.gt_velocity.shape[1])
         self.X = self.X[:, :min_length, :, :]
+        self.X = self.X.reshape(-1, self.X.shape[2], self.X.shape[3])
+        
+        self.odo = self.odo[:, :min_length, :, :]
+        self.odo = self.odo.reshape(-1, self.odo.shape[2], self.odo.shape[3])
+        
+        self.gt_poses = self.gt_poses[:, :min_length, :]
+        self.gt_poses = self.gt_poses.reshape(-1, self.gt_poses.shape[-1])
+        
         self.gt_velocity = self.gt_velocity[:, :min_length, :]
+        self.gt_velocity = self.gt_velocity.reshape(-1, self.gt_velocity.shape[-1])
         
-        #self.X = self.X.squeeze(2)
-        
+        self.time = self.time[:, :min_length].reshape(-1)
 
     def __len__(self):
         return self.X.shape[0]
@@ -173,7 +213,9 @@ class Spline_2D_Dataset():
         
         imu = torch.tensor(self.X[idx], dtype=torch.float32).permute(1, 0)
         velocity = torch.tensor(self.gt_velocity[idx], dtype=torch.float32)
-        return imu, velocity
+        poses = torch.tensor(self.gt_poses[idx], dtype=torch.float32)
+        poses_se3 = torch.tensor(self.gt_poses_se3[idx], dtype=torch.float32)
+        return imu, velocity, poses, poses_se3
     
 
 if __name__ == "__main__":
