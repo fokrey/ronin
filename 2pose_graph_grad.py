@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 
 import seaborn as sns
 
+# odometry residual
+def r_odo(T1,T2,Tobs):
+    return (T1*Tobs*T2.inv()).Ln()
+
 # computes full numerical gradient with reference to z for residual of odometry
 def dr_dz_twist_factor(T1,T2,Tobs):
     result = np.zeros((6,6))
@@ -14,8 +18,36 @@ def dr_dz_twist_factor(T1,T2,Tobs):
         xi = np.zeros(6)
         xi[i] = epsilon
         dTobs = mrob.SE3(xi)
-        result[:,i] = ((T1*dTobs*Tobs*T2.inv()).Ln() - initial_ln)/epsilon
+        result[:,i] = ((T1*(dTobs*Tobs)*T2.inv()).Ln() - initial_ln)/epsilon
     return result 
+
+# computes full numerical mixed second order derivative with reference to z for residual of odometry
+def d2r_dzdx_twist_factor(T1,T2,Tobs):
+    result = np.zeros((6,12,6),dtype=np.float64)
+    epsilon = 1e-4
+    delta = 1e-4
+    # initial_ln = (T1*Tobs*T2.inv()).Ln()
+    for i in range(12):
+        xi = np.zeros(12)
+        xi[i] = epsilon
+        dT1 = mrob.SE3(xi[:6])
+        dT2 = mrob.SE3(xi[6:])
+        for j in range(6):
+            zeta = np.zeros(6)
+            zeta[j] = delta
+            dTobs = mrob.SE3(zeta)
+
+            pp = ((dT1*T1)*(dTobs*Tobs)*(dT2*T2).inv()).Ln()
+            pm = ((dT1.inv()*T1)*(dTobs*Tobs)*(dT2.inv()*T2).inv()).Ln()
+            mp = ((dT1*T1)*(dTobs.inv()*Tobs)*(dT2*T2).inv()).Ln()
+            mm = ((dT1.inv()*T1)*(dTobs.inv()*Tobs)*(dT2.inv()*T2).inv()).Ln()
+
+            result[:,i,j] = (pp-pm-mp+mm)/(4*epsilon*delta)
+    return result 
+
+# gps residual
+def r_gps(T,Tobs):
+    return (T * Tobs.inv()).Ln()
 
 # computes full numerical gradient with reference to z for residual of gps
 def dr_dz_gps_factor(T, Tobs):
@@ -26,8 +58,30 @@ def dr_dz_gps_factor(T, Tobs):
         xi = np.zeros(6)
         xi[i] = epsilon
         dTobs = mrob.SE3(xi)
-        result[:,i] = ((T * dTobs * Tobs.inv()).Ln() - initial_ln)/epsilon
+        result[:,i] = ((T * (dTobs * Tobs).inv()).Ln() - initial_ln)/epsilon
     return result
+
+# computes full numerical mixed second order derivative with reference to z for residual of gps
+def d2r_dzdx_gps_factor(T,Tobs):
+    result = np.zeros((6,6,6),dtype=np.float64)
+    epsilon = 1e-4
+    delta = 1e-4
+    for i in range(6):
+        xi = np.zeros(6)
+        xi[i] = epsilon
+        dT = mrob.SE3(xi[:6])
+        for j in range(6):
+            zeta = np.zeros(6)
+            zeta[j] = delta
+            dTobs = mrob.SE3(zeta)
+
+            pp = ((dT*T)*(dTobs*Tobs).inv()).Ln()
+            pm = ((dT.inv()*T)*(dTobs*Tobs).inv()).Ln()
+            mp = ((dT*T)*(dTobs.inv()*Tobs).inv()).Ln()
+            mm = ((dT.inv()*T)*(dTobs.inv()*Tobs).inv()).Ln()
+
+            result[:,i,j] = (pp-pm-mp+mm)/(4*epsilon*delta)
+    return result 
 
 def derivative_simple_ln(T1):
     result = np.zeros((6,6))
@@ -46,15 +100,32 @@ def draw_array(data, title):
     fig.suptitle(title)
     ax[0].imshow(data)
     ax[1].spy(data)
-    sns.heatmap(data, annot=True,ax=ax[2])
+    sns.heatmap(data, annot=True,ax=ax[2],fmt='.2f',annot_kws={"fontsize":6},square=True)
     plt.show()
 
 
 if __name__ == "__main__":
     # consider this pair of nodes
     T_1 =   mrob.SE3([0, 0, 0, 0,   0, 0])
+    draw_array(T_1.T(),'T_1')
     T_2 =   mrob.SE3([0, 0, 0, 1,   0, 0])
+    draw_array(T_2.T(),'T_2')
+
     T_obs = mrob.SE3([0, 0, 0, 0.9, 0, 0]) # small error in odometry
+    draw_array(T_obs.T(),'T_obs')
+
+
+    d2r_dzdx_odo = d2r_dzdx_twist_factor(T_1,T_2, T_obs)
+    # for i in range(6):
+    #     draw_array(d2r_dzdx_odo[i],f"d2r_dz_dx_odo[{i}]")
+
+    d2r_dzdx_gps_1 = d2r_dzdx_gps_factor(T_1, T_1)
+    # for i in range(6):
+    #     draw_array(d2r_dzdx_gps_1[i],f"d2r_dzdx_gps_1[{i}]")
+    
+    d2r_dzdx_gps_2 = d2r_dzdx_gps_factor(T_2, T_2)
+    # for i in range(6):
+    #     draw_array(d2r_dzdx_gps_2[i],f"d2r_dzdx_gps_2[{i}]")
 
     dr_dz_gps1 = dr_dz_gps_factor(T_1, T_1)
     draw_array(dr_dz_gps1,'dr_dz_gps1')
@@ -63,8 +134,10 @@ if __name__ == "__main__":
     draw_array(dr_dz_gps2,'dr_dz_gps2')
 
     # information matrices
-    inf_obs_odo = np.identity(6)*1e+0
-    inf_obs_gps = np.identity(6)*1e+2
+    inf_obs_odo = np.identity(6)*1e+1
+    draw_array(inf_obs_odo,'inf_obs_odo')
+    inf_obs_gps = np.identity(6)*1e+1
+    draw_array(inf_obs_gps,'inf_obs_gps')
 
     # composing graph
     graph = mrob.FGraph()
@@ -78,12 +151,6 @@ if __name__ == "__main__":
     # then 2 GPS factors added
     graph.add_factor_1pose_3d(T_1,n1, inf_obs_gps)
     graph.add_factor_1pose_3d(T_2,n2, inf_obs_gps)
-
-    # cheking the residual value
-    r = (T_1*T_obs*T_2.inv())
-    # print(f"{r=}\n")
-
-    # print(f"{r.Ln()=}")
 
     # numerical grad  dr/dz of odometry factor residual
     dr_dz_odo = dr_dz_twist_factor(T_1, T_2, T_obs)
@@ -112,26 +179,41 @@ if __name__ == "__main__":
     dr_dx_ = graph.get_adjacency_matrix().todense()
     draw_array(dr_dx_,'dr_dx')
 
-    W = graph.get_W_matrix().todense()
+    W = np.array(graph.get_W_matrix().todense())
 
     draw_array(W,'W')
 
-    chi2_dx_dz = dr_dx_.transpose() @ W @ dr_dz
 
-    draw_array(chi2_dx_dz,'chi2_dx_dz')
+    d2r_dzdx = np.zeros((18,12,18))
+    d2r_dzdx[:6,:,:6] = d2r_dzdx_odo
+    d2r_dzdx[6:12,:6,6:12] = d2r_dzdx_gps_1
+    d2r_dzdx[12:,6:,12:] = d2r_dzdx_gps_2
+
+    r_all = np.hstack((r_odo(T_1,T_2,T_obs),r_gps(T_1,T_1),r_gps(T_2,T_2))).reshape(-1,1)
+
+    second_term = (d2r_dzdx.swapaxes(0,1)@W@r_all).squeeze()
 
 
-    dx_dz = hessian @ chi2_dx_dz
+    draw_array(second_term, "d2r_dzdx^T * W *r")
+
+    chi2_dzdx = dr_dx_.transpose() @ W @ dr_dz
+
+    draw_array(chi2_dzdx,'chi2_dzdx: first term only')
+
+    draw_array(chi2_dzdx + second_term, 'chi2_dzdx: with second term')
+
+
+    dx_dz = hessian @ chi2_dzdx
 
     draw_array(dx_dz, 'dx_dz')
 
-    graph.solve(mrob.LM, verbose=True)
+    # graph.solve(mrob.LM, verbose=True)
     x_gt = [T_1, T_2]
     x_pred = graph.get_estimated_state()
-    delta_x = np.array([(mrob.SE3(a)*mrob.SE3(b).inv()).Ln() for a,b in zip(x_gt,x_pred)]).reshape((1,-1))
+    delta_x = np.array([(mrob.SE3(a)*mrob.SE3(b).inv()).Ln() for a,b in zip(x_pred,x_gt)]).reshape((1,-1))
     draw_array(delta_x,'delta_x')
 
-    dL_dz = -delta_x @ dx_dz
+    dL_dz = delta_x @ dx_dz
 
 
     draw_array(dL_dz,'dL_dz')
