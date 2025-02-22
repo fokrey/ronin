@@ -2,7 +2,7 @@ import mrob
 import numpy as np
 np.set_printoptions(precision=4,linewidth=180)
 import matplotlib.pyplot as plt
-
+from tqdm import tqdm
 import seaborn as sns
 
 # odometry residual
@@ -95,7 +95,7 @@ def derivative_simple_ln(T1):
     return result
 
 def draw_array(data, title):
-    # return
+    return
     fig,ax = plt.subplots(1,3,figsize=(15,5))
     fig.suptitle(title)
     ax[0].imshow(data)
@@ -104,14 +104,10 @@ def draw_array(data, title):
     plt.show()
 
 
-if __name__ == "__main__":
+def compute_grad(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps):
     # consider this pair of nodes
-    T_1 =   mrob.SE3([0, 0, 0, 0,   0, 0])
     draw_array(T_1.T(),'T_1')
-    T_2 =   mrob.SE3([0, 0, 0, 1,   0, 0])
     draw_array(T_2.T(),'T_2')
-
-    T_obs = mrob.SE3([0, 0, 0, 0.9, 0, 0]) # small error in odometry
     draw_array(T_obs.T(),'T_obs')
 
 
@@ -134,9 +130,9 @@ if __name__ == "__main__":
     draw_array(dr_dz_gps2,'dr_dz_gps2')
 
     # information matrices
-    inf_obs_odo = np.identity(6)*1e+1
+
     draw_array(inf_obs_odo,'inf_obs_odo')
-    inf_obs_gps = np.identity(6)*1e+1
+    
     draw_array(inf_obs_gps,'inf_obs_gps')
 
     # composing graph
@@ -215,9 +211,79 @@ if __name__ == "__main__":
 
     dL_dz = delta_x @ dx_dz
 
-
     draw_array(dL_dz,'dL_dz')
 
     draw_array(dL_dz[0,:6],'dL_dz[:6]')
 
     print(f"answer = {dL_dz[0,3]}")
+
+    return dL_dz[0,3]
+
+import torch
+
+import torch.nn as nn
+
+
+
+class TrivialModel(nn.Module):
+    def __init__(self, initial_value = 2.0):
+        super(TrivialModel,self).__init__()
+        data = torch.Tensor([initial_value])
+        self.scale = nn.Parameter(data, requires_grad=True)
+
+    def forward(self, x):
+        return self.scale*x
+
+
+if __name__ == "__main__":
+    T_1 =   mrob.SE3([0, 0, 0, 0,   0, 0])
+    T_2 =   mrob.SE3([0, 0, 0, 1,   0, 0])
+
+    initial_state = 1.3
+
+    model = TrivialModel(initial_state)
+    model.train()
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    alpha = 0.9
+    print(f"Noise scale = {alpha}")
+
+    print(f'model parameter should converge to: 1/{alpha} = {1/alpha}')
+
+    z_true = 1.0
+    z_noisy = alpha*1.0
+
+    learning_curve = [initial_state]
+    target_gradient = []
+
+    for i in tqdm(range(100)):
+        optimizer.zero_grad()
+        
+        z_pred = model(z_noisy)
+
+        T_obs = mrob.SE3([0, 0, 0, z_pred.item(), 0, 0])
+        inf_obs_odo = np.identity(6)*1e+1
+        inf_obs_gps = np.identity(6)*1e+1
+
+        dL_dz = compute_grad(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps)
+        target_gradient.append(dL_dz)
+
+        z_pred.backward(torch.tensor(dL_dz).reshape((1,)))
+        optimizer.step()
+        learning_curve.append(model.scale.item())
+
+        print(model.scale.item())
+
+    fig,ax = plt.subplots(2,1)
+    ax[0].plot(learning_curve, label='model parameter')
+    ax[0].hlines(1/alpha,0,len(learning_curve),'red','dashed',label='true value')
+    ax[0].legend()
+    ax[0].grid()
+    ax[0].set_title('Model training')
+
+    ax[1].plot(target_gradient,'red',label='computed gradient')
+    ax[1].legend()
+    ax[1].grid()
+    ax[1].set_title('Estimated_gradient')
+    plt.tight_layout()
+    plt.show()
