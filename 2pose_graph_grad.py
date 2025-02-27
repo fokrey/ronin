@@ -4,6 +4,9 @@ np.set_printoptions(precision=4,linewidth=180)
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import seaborn as sns
+from source.mrob_num_diff.graph_generator import ToRoContainer
+from source.mrob_num_diff.num_diff_3d import numerical_diff2_3d, numerical_diff1_3d
+import os
 
 # odometry residual
 def r_odo(T1,T2,Tobs):
@@ -215,9 +218,81 @@ def compute_grad(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps):
 
     draw_array(dL_dz[0,:6],'dL_dz[:6]')
 
-    print(f"answer = {dL_dz[0,3]}")
+    # print(f"answer = {dL_dz[0,3]}")
 
     return dL_dz[0,3]
+
+def compute_grad1(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
+    graph = mrob.FGraph()
+    toro_container = ToRoContainer()
+    
+    n1 = graph.add_node_pose_3d(T_1)
+    n2 = graph.add_node_pose_3d(T_2)
+    toro_container.add_node_pose_3d(n1, T_1.Ln())
+    toro_container.add_node_pose_3d(n2, T_2.Ln())
+
+    graph.add_factor_2poses_3d(T_obs, n1, n2, inf_obs_odo)
+    toro_container.add_factor_2poses_3d(n1, n2, T_obs.Ln(), inf_obs_odo)
+
+    graph.add_factor_1pose_3d(T_1, n1, inf_obs_gps)
+    graph.add_factor_1pose_3d(T_2, n2, inf_obs_gps)
+    toro_container.add_factor_1pose_3d(n1, T_1.Ln(), inf_obs_gps)
+    toro_container.add_factor_1pose_3d(n2, T_2.Ln(), inf_obs_gps)
+
+    with open(toro_file, "w") as f:
+        toro_lines = toro_container.get_lines()
+        f.writelines(toro_lines)
+
+    dx_dz = numerical_diff1_3d(toro_file, dz=1e-4)
+
+    graph.solve(mrob.LM, verbose=False)
+    x_pred = graph.get_estimated_state()
+
+    x_gt = [T_1, T_2]
+    delta_x = np.array([(mrob.SE3(a) * mrob.SE3(b).inv()).Ln() for a, b in zip(x_pred, x_gt)]).reshape((1, -1))
+
+    dL_dz = delta_x @ dx_dz
+
+    return dL_dz[0, 3] 
+
+
+def compute_grad2(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
+    graph = mrob.FGraph()
+    toro_container = ToRoContainer()
+    
+    n1 = graph.add_node_pose_3d(T_1)
+    n2 = graph.add_node_pose_3d(T_2)
+    toro_container.add_node_pose_3d(n1, T_1.Ln())
+    toro_container.add_node_pose_3d(n2, T_2.Ln())
+
+    graph.add_factor_2poses_3d(T_obs, n1, n2, inf_obs_odo)
+    toro_container.add_factor_2poses_3d(n1, n2, T_obs.Ln(), inf_obs_odo)
+
+    graph.add_factor_1pose_3d(T_1, n1, inf_obs_gps)
+    graph.add_factor_1pose_3d(T_2, n2, inf_obs_gps)
+    toro_container.add_factor_1pose_3d(n1, T_1.Ln(), inf_obs_gps)
+    toro_container.add_factor_1pose_3d(n2, T_2.Ln(), inf_obs_gps)
+
+    with open(toro_file, "w") as f:
+        toro_lines = toro_container.get_lines()
+        f.writelines(toro_lines)
+
+    dx_dz = numerical_diff2_3d(toro_file, dx=1e-4, dz=1e-4)
+
+    # hessian = graph.get_information_matrix().todense()
+    # hessian_inv = -np.linalg.inv(np.array(hessian))
+
+    # dx_dz = hessian_inv @ chi2_dzdx
+
+    graph.solve(mrob.LM, verbose=False)
+    x_pred = graph.get_estimated_state()
+
+    x_gt = [T_1, T_2]
+    delta_x = np.array([(mrob.SE3(a) * mrob.SE3(b).inv()).Ln() for a, b in zip(x_pred, x_gt)]).reshape((1, -1))
+
+    dL_dz = delta_x @ dx_dz
+
+    return dL_dz[0, 3]  
 
 import torch
 
@@ -266,9 +341,14 @@ if __name__ == "__main__":
         inf_obs_gps = np.identity(6)*1e+1
 
         dL_dz = compute_grad(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps)
-        target_gradient.append(dL_dz)
+        dL_dz1 = compute_grad1(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, os.path.join('out', 'simple_toro_file1.txt'))
+        dL_dz2 = compute_grad2(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, os.path.join('out', 'simple_toro_file2.txt'))
+        print('Gradient :', dL_dz)
+        print('Gradient1:', dL_dz1)
+        print('Gradient2:', dL_dz) 
+        target_gradient.append(dL_dz1)
 
-        z_pred.backward(torch.tensor(dL_dz).reshape((1,)))
+        z_pred.backward(torch.tensor(dL_dz1).reshape((1,)))
         optimizer.step()
         learning_curve.append(model.scale.item())
 
