@@ -220,7 +220,7 @@ def compute_grad(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps):
 
     # print(f"answer = {dL_dz[0,3]}")
 
-    return dL_dz[0,3]
+    return dL_dz[0, 2]
 
 def compute_grad1(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
     graph = mrob.FGraph()
@@ -253,10 +253,20 @@ def compute_grad1(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
 
     dL_dz = delta_x @ dx_dz
 
-    return dL_dz[0, 3] 
+    return dL_dz[0, 2] 
 
+## @package pyexample
+#  Documentation for this module.
+#
+#  More details.
+
+## Documentation for a function.
+# @file 
+# 
+#  More details.
 
 def compute_grad2(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
+
     graph = mrob.FGraph()
     toro_container = ToRoContainer()
     
@@ -292,16 +302,14 @@ def compute_grad2(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, toro_file):
 
     dL_dz = delta_x @ dx_dz
 
-    return dL_dz[0, 3]  
+    return dL_dz[0, 2]  
 
 import torch
 
 import torch.nn as nn
 
-
-
 class TrivialModel(nn.Module):
-    def __init__(self, initial_value = 2.0):
+    def __init__(self, initial_value = 1.0):
         super(TrivialModel,self).__init__()
         data = torch.Tensor([initial_value])
         self.scale = nn.Parameter(data, requires_grad=True)
@@ -311,32 +319,33 @@ class TrivialModel(nn.Module):
 
 
 if __name__ == "__main__":
-    T_1 =   mrob.SE3([0, 0, 0, 0,   0, 0])
-    T_2 =   mrob.SE3([0, 0, 0, 1,   0, 0])
+    T_1 =   mrob.SE3([0, 0, 0, 0, 0, 0])
+    yaw_angle = 0.5
+    T_2 = mrob.SE3([0, 0, yaw_angle, 0, 0, 0]) 
+    # T_2 =   mrob.SE3([0, 0, 0, 1,   0, 0]) #  T_2 = mrob.SE3([0, 0, 0.5, 0, 0, 0]) rotation yaw 
 
-    initial_state = 1.3
+    initial_state = 1.0
 
     model = TrivialModel(initial_state)
     model.train()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    alpha = 0.9
+    alpha = 1.9
     print(f"Noise scale = {alpha}")
 
     print(f'model parameter should converge to: 1/{alpha} = {1/alpha}')
 
-    z_true = 1.0
-    z_noisy = alpha*1.0
+    z_noisy = alpha*0.5
 
     learning_curve = [initial_state]
     target_gradient = []
 
-    for i in tqdm(range(100)):
+    for i in tqdm(range(300)):
         optimizer.zero_grad()
         
         z_pred = model(z_noisy)
 
-        T_obs = mrob.SE3([0, 0, 0, z_pred.item(), 0, 0])
+        T_obs = mrob.SE3([0, 0, z_pred.item(), 0, 0, 0])
         inf_obs_odo = np.identity(6)*1e+1
         inf_obs_gps = np.identity(6)*1e+1
 
@@ -345,10 +354,10 @@ if __name__ == "__main__":
         dL_dz2 = compute_grad2(T_1, T_2, T_obs, inf_obs_odo, inf_obs_gps, os.path.join('out', 'simple_toro_file2.txt'))
         print('Gradient :', dL_dz)
         print('Gradient1:', dL_dz1)
-        print('Gradient2:', dL_dz) 
-        target_gradient.append(dL_dz1)
+        print('Gradient2:', dL_dz2) 
+        target_gradient.append(dL_dz2)
 
-        z_pred.backward(torch.tensor(dL_dz1).reshape((1,)))
+        z_pred.backward(torch.tensor(dL_dz2).reshape((1,)))
         optimizer.step()
         learning_curve.append(model.scale.item())
 
